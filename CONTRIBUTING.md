@@ -25,7 +25,7 @@ without them.
 Please **don't open a public issue** for a security problem, such as a way for
 untrusted code to reach the self-hosted runner or the signing secrets. Report
 it privately from the repository's **Security** tab → **Report a
-vulnerability**.
+vulnerability**. [SECURITY.md](SECURITY.md) has the details.
 
 ## Ground rules for changes
 
