@@ -1,7 +1,7 @@
 # Only pre-prod may be merged into main.
 #
 # GitHub rulesets can't restrict a PR's SOURCE branch, so this job does it, and
-# the main ruleset (docs/github-rulesets/main.json) makes it a required
+# docs/github-rulesets/main-only-from-pre-prod.json makes it a required
 # check. The job id `source-is-pre-prod` is the status-check context that ruleset
 # requires: rename both together. It runs on GitHub's hosted runner: it executes
 # no repository code, so it is safe for fork PRs.

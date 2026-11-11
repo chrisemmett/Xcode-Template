@@ -49,10 +49,11 @@ On a Mac signed in to the team's Apple Developer account.
 
 5. **Repository variable** (optional) `NOTIFY_WEBHOOK_URL`: where the workflows
    post their result. Unset means no notifications.
-6. **Rulesets.** Import `docs/github-rulesets/*.json` (Settings → Rules →
-   Rulesets → New → Import). Required status checks need a public repository or
-   a paid plan; on GitHub Free with a private repository, keep the
-   pull-request and no-direct-push rules and merge only green PRs.
+6. **Rulesets.** Once `main` and `pre-prod` are pushed, import both
+   `docs/github-rulesets/*.json` (Settings → Rules → Rulesets → New → Import).
+   Rulesets need a public repository or a paid plan; on GitHub Free with a
+   private repository they aren't enforced, so merge only green PRs, and only
+   `pre-prod` into `main` (`docs/github-rulesets/README.md`).
 
 ## Each release
 
