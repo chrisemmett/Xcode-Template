@@ -9,6 +9,50 @@ throwaway keychain, pin the shipping targets to those profiles, archive and
 upload. In Claude Code, "release to TestFlight" (the `release-to-testflight`
 skill) bumps the number and pushes the ref.
 
+## The runner Mac
+
+`build.yml`, `release.yml` and `ui-tests.yml` run on `[self-hosted, macOS]`, the Mac
+that already builds the other apps. Only `main-source-guard.yml` runs on GitHub's
+hosted Ubuntu. Once per app, on that Mac:
+
+1. **Register a runner for this repository.** A runner on a personal GitHub account
+   serves one repository, so each app needs its own runner instance, even on the
+   same Mac. At https://github.com/{{REPO_SLUG}}/settings/actions/runners/new pick
+   macOS and follow GitHub's commands in a new folder of its own, for example
+   `~/actions-runners/{{APP_NAME}}`. Never reuse another app's folder. Keep the default
+   labels: `self-hosted` and `macOS` are what the workflows ask for.
+2. **Run it as a service**, as your user (not root), so it survives reboots and
+   logouts, from that folder:
+
+   ```bash
+   ./svc.sh install && ./svc.sh start
+   ```
+
+   Every app's runner is its own service, so two apps' builds can run at once and
+   share the Mac's CPU. Jobs pushed before the runner exists wait in the queue and
+   start once it's online, but GitHub fails them after 24 hours.
+3. **Check the tools, once per Mac.** The Mac already has these if it builds the
+   other apps:
+   - Homebrew, in `/opt/homebrew` (Apple silicon) or `/usr/local`. The workflows add
+     it to the service's PATH, and each run's `brew bundle --no-upgrade` installs any
+     missing `Brewfile` tool (fastlane, xcodegen, SwiftLint, SwiftFormat). There's
+     nothing to install for this app.
+   - Xcode at `/Applications/Xcode.app`, the path every workflow's `DEVELOPER_DIR`
+     pins (the service ignores `xcode-select`), at the version in `.xcode-version`.
+     A different major version fails every build; a minor version warns on builds
+     and fails a release. Open it once and accept the licence, and install the iOS
+     simulator runtime for the deployment target.
+   - The App Store Connect key, `AuthKey_<ID>.p8`, in a folder the service's user can
+     read (`chmod 600`). The `ASC_KEY_PATH` secret points at it. All your apps can
+     share one key.
+4. **Confirm it works.** The runner shows as Idle in
+   https://github.com/{{REPO_SLUG}}/settings/actions/runners, and the next push runs
+   `build` on it.
+
+Signing needs nothing on the Mac: each release builds a throwaway keychain from the
+match vault and deletes it afterwards. There's no `pull_request` trigger, so a fork's
+PR never runs code on this machine.
+
 ## One-time setup
 
 On a Mac signed in to the team's Apple Developer account.

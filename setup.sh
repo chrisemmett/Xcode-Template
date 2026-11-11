@@ -210,8 +210,8 @@ $step2
 3. docs/release.md: Apple identifiers and App Store Connect record, the vault
    profiles (fastlane ios certificates), the six repository secrets, the
    NOTIFY_WEBHOOK_URL variable, the rulesets in docs/github-rulesets/
-   (import them now that both branches exist), and a self-hosted runner
-   for this repository.
+   (import them now that both branches exist), and this repository's own
+   runner on this Mac ("The runner Mac" section).
 4. Fill in design/Documentation/docs/01 - Proposal/00-High_Level_Design.md
    and .claude/CLAUDE.md's project section.
 5. In Claude Code: "release to TestFlight".
