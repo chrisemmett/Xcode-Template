@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# One-time setup for a repository made from this template. Run it once, from the
-# repository root, right after "Use this template" (or after unzipping):
+# One-time setup for a repository made from this template. Run it once, on the
+# GitHub runner Mac, from the repository root, right after "Use this template"
+# (or after unzipping). It asks you to confirm the machine before anything else:
 #
 #   ./setup.sh
 #
@@ -26,6 +27,18 @@ YES=0
 if [ ! -d .github/workflows-template ] && [ -d .github/workflows ]; then
   echo "This repository looks set up already (.github/workflows exists). Nothing to do." >&2
   exit 1
+fi
+
+# Meant for the GitHub runner Mac (the machine registered as this repository's
+# self-hosted runner), not a laptop. --yes skips the question.
+if [ "$YES" != 1 ]; then
+  echo "setup.sh turns this folder ($ROOT) into a new app, then commits and pushes it."
+  echo "It's meant to run on the GitHub runner Mac. This machine is: $(hostname -s 2>/dev/null || hostname)"
+  read -r -p "Is this the GitHub runner Mac? [y/N]: " go
+  case "${go:-n}" in
+    y|Y|yes) echo "" ;;
+    *) echo "Stopped; nothing changed. Run ./setup.sh on the GitHub runner Mac."; exit 1 ;;
+  esac
 fi
 
 ask() { # ask VAR "Label" "default": keeps $VAR if set in the environment
@@ -191,7 +204,8 @@ cat <<EOF
 ================================================================
 Set up. Next:
 
-1. On a Mac:  make bootstrap && make test && make open
+1. On each Mac you build on:  make bootstrap && make test && make open
+   (make bootstrap lists the Homebrew packages, fastlane included, and asks first)
 $step2
 3. docs/release.md: Apple identifiers and App Store Connect record, the vault
    profiles (fastlane ios certificates), the six repository secrets, the

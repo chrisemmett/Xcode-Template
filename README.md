@@ -11,11 +11,15 @@ and Claude Code skills that release and fix signing for you.
 1. On GitHub: push this folder to a repository and tick **Settings → Template
    repository**, then **Use this template** for each new app. (Or just unzip it
    into a new folder.)
-2. In the new repository, once:
+2. **On the GitHub runner Mac** (the machine registered as the repository's
+   self-hosted runner), in a clone of the new repository, once:
 
    ```sh
    ./setup.sh
    ```
+
+   It first asks you to confirm you're on the runner Mac, and stops without
+   changing anything unless you answer `y`.
 
    It asks for the app name, bundle ID, team ID, GitHub slug, match vault URL,
    deployment target and Xcode version, fills in every `{{PLACEHOLDER}}`, renames
@@ -37,7 +41,7 @@ An iPhone and iPad app. Swift 6, SwiftUI, iOS {{IOS_DEPLOYMENT_TARGET}}+.
 On a Mac with the Xcode in `.xcode-version`:
 
 ```sh
-make bootstrap    # Brewfile tools, Config/Local.xcconfig, generate the project
+make bootstrap    # Brewfile tools incl. fastlane (lists them, asks first), Config/Local.xcconfig, generate the project
 make open         # generate and open {{APP_NAME}}.xcodeproj
 make test         # core package + app unit tests
 make help         # everything else

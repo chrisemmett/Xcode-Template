@@ -24,7 +24,13 @@ XCODEBUILD    = xcodebuild -project $(PROJECT) -derivedDataPath $(DERIVED_DATA) 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-22s %s\n", $$1, $$2}'
 
-bootstrap: ## Install tools (Brewfile), create Config/Local.xcconfig, generate the project
+bootstrap: ## Install tools (Brewfile, after asking), create Config/Local.xcconfig, generate the project
+	@if [ -z "$$CI" ] && [ "$${YES:-}" != 1 ]; then \
+	  echo "make bootstrap installs these Homebrew packages on $$(hostname -s 2>/dev/null || hostname):"; \
+	  grep -vE '^[[:space:]]*(#|$$)' Brewfile | sed 's/^/  /'; \
+	  printf 'Install them on this Mac? [y/N]: '; read ans; \
+	  case "$$ans" in y|Y|yes) ;; *) echo "Nothing installed."; exit 1 ;; esac; \
+	fi
 	brew bundle --no-upgrade
 	@test -f Config/Local.xcconfig || cp Config/Local.example.xcconfig Config/Local.xcconfig
 	$(MAKE) generate
