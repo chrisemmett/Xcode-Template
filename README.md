@@ -1,8 +1,7 @@
 <!-- template:start -->
 # iOS app template
 
-Everything to start an iPhone and iPad app the way FQ, Ball-Kick-Game and Home
-Movies are run: XcodeGen, a Foundation-only core package, CI on a self-hosted
+Everything to start an iPhone and iPad app: XcodeGen, a Foundation-only core package, CI on a self-hosted
 Mac, TestFlight through fastlane match, design-driven development with LLDs,
 and Claude Code skills that release and fix signing for you.
 
