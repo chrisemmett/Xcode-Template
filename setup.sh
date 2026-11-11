@@ -7,8 +7,9 @@
 #
 # It fills in every {{PLACEHOLDER}}, renames the {{APP_NAME}} folders, moves the
 # workflows from .github/workflows-template/ to .github/workflows/ (they wait
-# there so the template itself never runs CI), runs `make check`, and deletes
-# itself. Commit the result.
+# there so the template itself never runs CI), runs `make check`, deletes
+# itself, commits the result on main, creates the pre-prod branch from that
+# commit, and offers to push both (--yes pushes without asking).
 #
 # Every answer can come from the environment instead of a prompt:
 #   APP_NAME=MyApp BUNDLE_ID=com.example.myapp TEAM_ID=ABCDE12345 \
@@ -130,20 +131,73 @@ fi
 
 rm -f setup.sh
 
+# 5. Commit on main and branch pre-prod from it: every later change comes off
+#    pre-prod and returns by PR, and only pre-prod merges into main.
+branch="$(git symbolic-ref --short -q HEAD || true)"
+if [ "$branch" != main ]; then
+  echo "Warning: on branch '${branch:-detached HEAD}', not main; committing here anyway." >&2
+fi
+committed=0
+git add -A
+if git commit -q -m "Start $DISPLAY_NAME from the iOS app template"; then
+  committed=1
+  echo "Committed the setup on ${branch:-HEAD}."
+else
+  echo "Warning: couldn't commit (is git's user.name/user.email set?). Commit by hand, then:" >&2
+  echo "  git branch pre-prod" >&2
+fi
+
+pushed=0
+if [ "$committed" = 1 ]; then
+  if git show-ref --verify -q refs/heads/pre-prod; then
+    echo "Branch pre-prod already exists; left as it is."
+  else
+    git branch pre-prod
+    echo "Created branch pre-prod from ${branch:-HEAD}."
+  fi
+  if git remote get-url origin >/dev/null 2>&1 && [ "$branch" = main ]; then
+    push=y
+    if [ "$YES" != 1 ]; then
+      read -r -p "Push main and pre-prod to origin now? [Y/n]: " push
+    fi
+    case "${push:-y}" in
+      y|Y|yes)
+        if git push -u origin main && git push -u origin pre-prod; then
+          pushed=1
+        else
+          echo "Warning: the push failed; push by hand (step 2 below)." >&2
+        fi ;;
+    esac
+  fi
+fi
+
+if [ "$pushed" = 1 ]; then
+  step2="2. main and pre-prod are pushed. From here on, work on branches cut from
+   pre-prod, merged by PR; only pre-prod merges into main."
+elif [ "$committed" = 1 ]; then
+  step2="2. Push main and pre-prod (setup committed the result and created pre-prod):
+     git push -u origin main && git push -u origin pre-prod
+   From here on, work on branches cut from pre-prod, merged by PR."
+else
+  step2="2. Commit, create pre-prod and push both:
+     git add -A && git commit -m \"Start $DISPLAY_NAME from the iOS app template\"
+     git branch pre-prod
+     git push -u origin main && git push -u origin pre-prod
+   From here on, work on branches cut from pre-prod, merged by PR."
+fi
+
 cat <<EOF
 
 ================================================================
 Set up. Next:
 
 1. On a Mac:  make bootstrap && make test && make open
-2. Commit and push to main, then create pre-prod from it:
-     git add -A && git commit -m "Start $DISPLAY_NAME from the iOS app template"
-     git push -u origin main && git push origin main:pre-prod
-   From here on, work on branches cut from pre-prod, merged by PR.
+$step2
 3. docs/release.md: Apple identifiers and App Store Connect record, the vault
    profiles (fastlane ios certificates), the six repository secrets, the
-   NOTIFY_WEBHOOK_URL variable, the rulesets in docs/github-rulesets/,
-   and a self-hosted runner for this repository.
+   NOTIFY_WEBHOOK_URL variable, the rulesets in docs/github-rulesets/
+   (import them now that both branches exist), and a self-hosted runner
+   for this repository.
 4. Fill in design/Documentation/docs/01 - Proposal/00-High_Level_Design.md
    and .claude/CLAUDE.md's project section.
 5. In Claude Code: "release to TestFlight".

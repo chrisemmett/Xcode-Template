@@ -21,7 +21,8 @@ and Claude Code skills that release and fix signing for you.
    deployment target and Xcode version, fills in every `{{PLACEHOLDER}}`, renames
    the `{{APP_NAME}}` folders, turns CI on (the workflows wait in
    `.github/workflows-template/` until then, so the template never runs CI),
-   runs `make check`, and deletes itself and this section.
+   runs `make check`, deletes itself and this section, commits the result on
+   `main`, creates `pre-prod` from it, and offers to push both.
 3. Follow the checklist it prints. `docs/release.md` has the detail.
 
 This section and `setup.sh` disappear after setup; everything below is the new
