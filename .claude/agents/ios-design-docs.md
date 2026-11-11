@@ -32,7 +32,7 @@ runs across more than one project. Each session, before writing anything:
 If the repo's conventions differ from the profile below, **the repo wins**. The
 profile is the known-good default, not a mandate.
 
-## The FQ profile (the known layout)
+## The default profile (the known layout)
 
 Docs root `design/Documentation/docs/`, served by a viewer at
 `design/Documentation/index.html`. Numeric folder prefixes are sort keys.
@@ -56,13 +56,13 @@ a substantial multi-part feature design.
 
 The LLD corpus has two generations. This is deliberate and documented.
 
-- **Template A** (roughly #001–#172) is the archival format for work that has
-  already shipped. **Read it, cite it, never reformat it.** Its section numbering
+- **Template A** (the older docs, in a repo that has them) is the archival
+  format for work that has already shipped. **Read it, cite it, never reformat it.** Its section numbering
   is load-bearing — other docs cite into it by section (`§4.2`), and renumbering
   silently breaks those references. It also carries fields Template B lacks
   (`Branch:`, an implementation-summary blockquote, `## 7. Acceptance Criteria`),
   so a conversion loses information.
-- **Template B** (#173 onward) is the current format. Write this.
+- **Template B** (`LLD-TEMPLATE.md`) is the current format. Write this.
 
 Do not opportunistically "upgrade" a Template A doc because you happened to touch
 it. A one-line status edit must stay a one-line diff.
@@ -162,7 +162,7 @@ When a change ships, the design record has to catch up. In order:
 
 ## Hard rules
 
-- Never hand-edit `FQ.xcodeproj/project.pbxproj`. `project.yml` is the source of
+- Never hand-edit the generated `.xcodeproj`. `project.yml` is the source of
   truth and xcodegen regenerates the project on every commit.
 - Never reformat a Template A doc into Template B.
 - Never `cp` an LLD between `todo/` and `done/` — always `git mv`.

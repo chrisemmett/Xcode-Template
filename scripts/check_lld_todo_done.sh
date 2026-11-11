@@ -5,7 +5,7 @@
 # A shipped LLD is `git mv`'d from todo/ to done/. When it is copied instead,
 # or the LLD lands on one branch while the code goes through another, both
 # files survive and the stale todo/ copy keeps describing work that already
-# shipped (FQ once had thirteen of them sitting in todo/ for two months). This
+# shipped (one project once had thirteen of them sitting in todo/ for two months). This
 # is the cheapest possible check for it, and it runs on the docs-only fast path
 # too, because that is exactly the kind of change that causes it.
 #

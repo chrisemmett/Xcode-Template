@@ -1,7 +1,8 @@
 # Why `xcodegen generate` keeps wiping your project — and how to stop it
 
-A companion to the CI template (written on FQ, still accurate for all three
-apps; symptoms 8 and 9 were added from Ball-Kick-Game and Home Movies). If your project uses
+A companion to the CI template, drawn from real apps that hit every one of
+these. The examples use a made-up iPhone app, `MyApp`, with a watch app and a
+complications extension. If your project uses
 [xcodegen](https://github.com/yonaskolb/XcodeGen) as the source of truth
 for `project.pbxproj`, this is the story of every setting that got
 silently dropped on regen and how `project.yml` was rewritten to make
@@ -23,14 +24,14 @@ preference:
    next regen, so this layer is effectively no defence at all).
 
 The rest of this doc maps each class of "blank-out" symptom to the layer
-that fixes it, with the FQ `project.yml` as the worked example.
+that fixes it, with `MyApp`'s `project.yml` as the worked example.
 
 ---
 
 ## Symptom 1: Info.plist keys disappear after regen
 
-**What broke.** Hand-edited keys in `FQ/Info.plist`, `FQWatch/Info.plist`,
-and `FQWatchComplications/Info.plist` vanished on every `xcodegen
+**What broke.** Hand-edited keys in `MyApp/Info.plist`, `MyAppWatch/Info.plist`,
+and `MyAppWatchComplications/Info.plist` vanished on every `xcodegen
 generate`. The most visible failure was the watch complications
 extension refusing to install with `extensionDictionary must be set`
 because `NSExtension` only lived in the on-disk plist, not in
@@ -41,16 +42,16 @@ run it rewrites that plist from the `info.properties:` block in
 `project.yml`. If a key isn't in `properties`, it's not in the output.
 
 **Fix.** Move every runtime-relevant key into `info.properties:`.
-For FQ this meant `CFBundleDisplayName`, `LSApplicationCategoryType`,
+For `MyApp` this meant `CFBundleDisplayName`, `LSApplicationCategoryType`,
 `ITSAppUsesNonExemptEncryption`, the `NSHealth*UsageDescription`
 strings, `UISupportedInterfaceOrientations`, `UILaunchScreen`, the
 watch's `WKApplication` / `WKCompanionAppBundleIdentifier`, and the
 complications' `NSExtension` dict.
 
 ```yaml
-FQWatchComplications:
+MyAppWatchComplications:
   info:
-    path: FQWatchComplications/Info.plist
+    path: MyAppWatchComplications/Info.plist
     properties:
       NSExtension:
         NSExtensionPointIdentifier: com.apple.widgetkit-extension
@@ -88,8 +89,8 @@ properties:
 ## Symptom 3: Signing & Capabilities pane goes blank
 
 **What broke.** HealthKit, iCloud, and Push rows would disappear from
-the FQ target's Signing & Capabilities pane after every regen, even
-though `FQ/FQ.entitlements` on disk still listed all the right keys.
+the app target's Signing & Capabilities pane after every regen, even
+though `MyApp/MyApp.entitlements` on disk still listed all the right keys.
 
 **Why.** Two independent xcodegen behaviours combined:
 
@@ -107,7 +108,7 @@ though `FQ/FQ.entitlements` on disk still listed all the right keys.
 too), AND set the matching capability flags under `attributes:`:
 
 ```yaml
-FQ:
+MyApp:
   attributes:
     DevelopmentTeam: ABCDE12345
     SystemCapabilities:
@@ -115,12 +116,12 @@ FQ:
       com.apple.iCloud:       { enabled: 1 }
       com.apple.Push:         { enabled: 1 }
   entitlements:
-    path: FQ/FQ.entitlements
+    path: MyApp/MyApp.entitlements
     properties:
       com.apple.developer.healthkit: true
       com.apple.developer.healthkit.background-delivery: true
       com.apple.developer.icloud-container-identifiers:
-        - iCloud.com.example.fq
+        - iCloud.com.example.myapp
       com.apple.developer.icloud-services:
         - CloudKit
       aps-environment: development
@@ -172,7 +173,7 @@ copy-and-fill template.
 
 ```yaml
 targets:
-  FQ:
+  MyApp:
     configFiles:
       Debug:   Local.xcconfig
       Release: Local.xcconfig
@@ -189,7 +190,7 @@ never touched by xcodegen — so values placed there survive every regen.
 
 **One subtlety.** xcconfig settings beat *project-base* xcodeproj
 settings, but lose to *target-level* xcodeproj settings. So if a value
-needs to differ between targets (e.g. FQ ships at `2026.06` while the
+needs to differ between targets (e.g. the app ships at `2026.06` while the
 watch app stays at `1.0.0`), the per-target value goes under that
 target's `settings.base`, and only the shared default goes in
 `project.yml`'s top-level `settings.base` or in `Local.xcconfig`.
@@ -199,7 +200,7 @@ target's `settings.base`, and only the shared default goes in
 ## Symptom 6: Display Name and Category tab go blank
 
 **What broke.** Xcode's General tab rendered an empty Display Name and
-Category for the FQ target after every regen, even though the on-disk
+Category for the app target after every regen, even though the on-disk
 Info.plist still had the right values.
 
 **Why.** The General tab doesn't read those fields from the plist on
@@ -214,7 +215,7 @@ build settings:
 ```yaml
 settings:
   base:
-    INFOPLIST_KEY_CFBundleDisplayName: FQ
+    INFOPLIST_KEY_CFBundleDisplayName: MyApp
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.healthcare-fitness
 ```
 
@@ -246,7 +247,7 @@ Drop any one of them and that destination is back on the next regen.
 
 ## Symptom 8: "Multiple commands produce .../Info.plist"
 
-**What broke.** Ball-Kick-Game's app target listed its whole source folder,
+**What broke.** An app target listed its whole source folder,
 which contains `Info.plist`. XcodeGen processed the plist through
 `INFOPLIST_FILE` *and* copied it as a resource, and the build refused both.
 
@@ -265,14 +266,14 @@ before building, so the broken committed file was never opened.
 
 **Fixes, in order of preference.**
 
-1. Don't commit the generated project (Home Movies, ADR 0013): put
+1. Don't commit the generated project: put
    `*.xcodeproj/` in `.gitignore` and generate it everywhere (`make generate`,
    the CI workflows, the fastlane lanes). The class of bug disappears, along
    with pbxproj merge conflicts and the "forgot to regenerate" commit. The
    template does this.
 2. If the project must be committed (so a clone opens in Xcode without
    xcodegen), lint it in CI before regenerating:
-   `plutil -lint <App>.xcodeproj/project.pbxproj` (Ball-Kick-Game).
+   `plutil -lint <App>.xcodeproj/project.pbxproj`.
 
 ---
 

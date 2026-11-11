@@ -155,7 +155,7 @@ Then group findings by severity, highest first. Each finding:
 
 ```
 **C-1 · Streak resets at every month boundary (deviates from its own LLD)** *(→ #202)*
-`FQ/ViewModels/CurrentMonthViewModel.swift:2866-2885`
+`App/ViewModels/CurrentMonthViewModel.swift:2866-2885`
 
 <Prose: the mechanism — what the code actually does. Then the user-visible
 symptom. Then why the existing tests did not catch it. Then which design says

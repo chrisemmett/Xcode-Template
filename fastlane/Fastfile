@@ -114,8 +114,8 @@ def beta(platform:, scheme:, app_platform:)
   upload_to_testflight(api_key: api_key, app_platform: app_platform, skip_waiting_for_build_processing: true)
 end
 
-# A last look inside the archive before it leaves the building. Home Movies uses
-# this to refuse an IPA that carries Debug-only content, and to insist on content
+# A last look inside the archive before it leaves the building. Use it, for
+# example, to refuse an IPA that carries Debug-only content, and to insist on content
 # App Review needs. Add checks with `listing.lines.any? { ... }`.
 def verify_ipa(ipa)
   listing = sh("unzip", "-l", ipa, log: false)
