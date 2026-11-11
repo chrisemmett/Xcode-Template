@@ -49,7 +49,7 @@ certificates.
    `main`, creates `pre-prod` from it, and offers to push both.
 3. Follow the checklist it prints. `docs/release.md` has the detail.
 
-This section, `setup.sh` and the template's MIT `LICENSE` disappear after setup,
+This section, `setup.sh`, the template's MIT `LICENSE` and its `CONTRIBUTING.md` disappear after setup,
 so a new app starts unlicensed until you choose one; everything below is the new
 app's README.
 <!-- template:end -->
