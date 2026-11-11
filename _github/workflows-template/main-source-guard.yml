@@ -1,0 +1,32 @@
+# Only pre-prod may be merged into main.
+#
+# GitHub rulesets can't restrict a PR's SOURCE branch, so this job does it, and
+# the main ruleset (docs/github-rulesets/main.json) makes it a required
+# check. The job id `source-is-pre-prod` is the status-check context that ruleset
+# requires: rename both together. It runs on GitHub's hosted runner: it executes
+# no repository code, so it is safe for fork PRs.
+name: main-source-guard
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` re-runs the check when a PR's base is retargeted to main.
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  source-is-pre-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only pre-prod may merge into main
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" != "pre-prod" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::PRs into main must come from pre-prod in this repo (got $HEAD_REPO:$HEAD_REF)"
+            exit 1
+          fi
+          echo "Source is pre-prod: OK"

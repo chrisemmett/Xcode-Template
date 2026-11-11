@@ -1,0 +1,3 @@
+// Copy to Config/Local.xcconfig (ignored by git) for per-developer overrides,
+// for example to build on a device under your own team. CI never has one.
+// DEVELOPMENT_TEAM = ABCDE12345

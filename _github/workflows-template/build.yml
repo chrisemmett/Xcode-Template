@@ -1,0 +1,184 @@
+# The merge gate: every push, on the self-hosted Mac runner. Runs the same make
+# targets a developer runs locally. Never signs, reads no secrets.
+#
+# Security: there is deliberately no `pull_request` trigger. On a self-hosted
+# runner that also holds release signing material, a fork PR's run would execute
+# untrusted code (project.yml scripts, tests, SPM plugins) on that machine.
+# `push` covers every branch in this repository, and its check run shows on that
+# branch's PR, so it can still be a required status check. Do not add
+# `pull_request` without moving to ephemeral runners.
+#
+# Fast paths (the job always runs, so the required `build` check always reports;
+# a skipped job would leave a PR at "Expected" forever):
+#   - a parent with the same files (build number aside) already passed the full
+#     build: scripts/ci_reuse_build.py. Saves rebuilding an up-to-date branch's
+#     merge into pre-prod, and the TestFlight build-number bump.
+#   - only docs, CI or release files changed against the merge-base with where
+#     the branch will merge: scripts/detect_no_build.sh.
+# Either way the cheap checks (Xcode pin, LLD todo/done, store metadata, the
+# scripts' self-tests) still run.
+name: Build
+
+on:
+  push:
+    # testflight-* refs run release.yml, which archives the same commit. Listing
+    # a branch filter also means tag pushes don't run this workflow.
+    branches-ignore:
+      - "testflight-*"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege, declared so the repository default (often read/write) never applies.
+permissions:
+  contents: read
+  # Only so scripts/ci_reuse_build.py can read earlier runs of this workflow.
+  actions: read
+
+jobs:
+  # No `name:` on purpose: the check run takes the job id, `build`, which is the
+  # context the rulesets require. A display name would report under that name and
+  # leave `build` at "Expected" forever. scripts/ci_reuse_build.py reads it too.
+  build:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 80
+    env:
+      # The runner daemon ignores xcode-select changes made in an interactive
+      # shell, and may default to the Command Line Tools ("xcodebuild requires
+      # Xcode"). Pin the Xcode here; .xcode-version says which one it should be.
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      # For the duration in the notification at the end.
+      - name: Note the start time
+        run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config, where repository code run
+          # by later steps (xcodegen, tests, SPM plugins) could read it.
+          persist-credentials: false
+          # Full history, so the fast-path checks can find merge-bases and parents.
+          fetch-depth: 0
+
+      # Fails safe: no match, no token or an API error all mean "build". Never
+      # on main, which always gets the full build. System Python 3.9 is enough.
+      - name: Look for a green build of these files
+        id: reuse
+        if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci_reuse_build.py
+
+      - name: Detect a change that builds nothing
+        id: changes
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          REUSE_RUN: ${{ steps.reuse.outputs.reuse_run }}
+        run: scripts/detect_no_build.sh
+
+      - name: Toolchain and Xcode pin
+        run: |
+          xcodebuild -version
+          swift --version
+          scripts/check_xcode_pin.sh major
+
+      - name: Cheap checks (LLD todo/done, store metadata, script self-tests)
+        run: make check
+
+      # The runner daemon doesn't inherit the interactive PATH, so Homebrew tools
+      # aren't visible without this. Handles Apple silicon and Intel prefixes.
+      - name: Add Homebrew to PATH
+        if: steps.changes.outputs.no_build != 'true'
+        run: |
+          if [ -x /opt/homebrew/bin/brew ]; then
+            echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          elif [ -x /usr/local/bin/brew ]; then
+            echo /usr/local/bin >> "$GITHUB_PATH"
+          else
+            echo "Homebrew not found on runner" >&2
+            exit 1
+          fi
+
+      - name: Install tools (Brewfile)
+        if: steps.changes.outputs.no_build != 'true'
+        run: |
+          brew bundle --no-upgrade
+          xcodegen --version
+          swiftlint version
+          swiftformat --version
+
+      - name: SwiftLint and SwiftFormat
+        if: steps.changes.outputs.no_build != 'true'
+        run: make lint
+
+      # The .xcodeproj isn't committed, so CI always generates it, and a
+      # forgotten regenerate can never ship a stale project.
+      - name: Generate the Xcode project
+        if: steps.changes.outputs.no_build != 'true'
+        run: make generate
+
+      - name: Core package tests
+        if: steps.changes.outputs.no_build != 'true'
+        run: make test-core
+
+      # Clears any simulator left booted or wedged by an earlier job on this
+      # self-hosted Mac (the "Application failed preflight checks" flake).
+      - name: Reset simulators
+        if: steps.changes.outputs.no_build != 'true'
+        run: xcrun simctl shutdown all || true
+
+      # Picks the simulator at run time (scripts/pick_simulator.sh) and retries
+      # only known launch flakes (scripts/xctest.sh).
+      - name: App tests
+        if: steps.changes.outputs.no_build != 'true'
+        run: make test-app
+
+      # Marker for scripts/ci_reuse_build.py: it only reuses runs where this
+      # step succeeded, i.e. a full build that passed. Keep it last, and keep
+      # its name in step with FULL_BUILD_STEP (the self-test checks).
+      - name: Full build passed
+        if: steps.changes.outputs.no_build != 'true'
+        run: echo "Full build passed."
+
+      - name: Keep the test results
+        if: ${{ failure() && steps.changes.outputs.no_build != 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Notify
+        if: ${{ always() }}
+        # A notification that can't be delivered must not fail the build.
+        continue-on-error: true
+        # Every ${{ }} expression goes through env:, so the shell treats it as
+        # data, never as code (a branch name is attacker-controlled text).
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ vars.NOTIFY_WEBHOOK_URL }}
+          KIND: build
+          STATUS: ${{ job.status }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          NO_BUILD: ${{ steps.changes.outputs.no_build }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] && [ -x scripts/notify.sh ]; then
+            scripts/notify.sh
+          elif [ -n "$NOTIFY_WEBHOOK_URL" ]; then
+            # The checkout failed, so the script isn't there: send a bare message.
+            ref=${REF_NAME//\\/\\\\}; ref=${ref//\"/\\\"}
+            curl -sS --max-time 20 -X POST "$NOTIFY_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"message\": \"⚠️ $ref: $STATUS before checkout\\n$GITHUB_SERVER_URL/$REPO/actions/runs/$RUN_ID\", \"silent\": false}" \
+              || true
+          fi

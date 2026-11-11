@@ -1,0 +1,187 @@
+# Release automation. Lanes:
+#   fastlane ios beta                 Build and upload to TestFlight (CI runs this)
+#   fastlane ios certificates         Fetch signing assets; on a Mac outside CI, create them
+#   fastlane ios certificates force:true   Re-issue the profiles (after a capability change)
+#   fastlane ios metadata             Upload the App Store text in fastlane/metadata (by hand)
+#   fastlane ios metadata screenshots:true   ...and the PNGs in fastlane/screenshots
+# Add a `platform :tvos` (or :watchos ships inside the iOS app) block below for more platforms.
+#
+# Signing uses fastlane match: one Apple Distribution certificate and an App Store
+# profile per bundle ID (and per platform), encrypted in a private git "vault".
+# CI only reads it. The build number is the committed CURRENT_PROJECT_VERSION in
+# project.yml, which release.yml checks against the testflight-<N> ref first.
+#
+# Environment: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8 on the Mac),
+# MATCH_GIT_URL, MATCH_PASSWORD, and on CI MATCH_GIT_BASIC_AUTHORIZATION.
+# The metadata lane also needs REVIEW_FIRST_NAME, REVIEW_LAST_NAME, REVIEW_EMAIL
+# and REVIEW_PHONE (App Review's contact), kept out of the repository.
+# See docs/release.md.
+
+# fastlane reports anonymous usage by default; send nothing.
+opt_out_usage
+
+default_platform(:ios)
+
+PROJECT = "{{APP_NAME}}.xcodeproj"
+TEAM_ID = ENV.fetch("TEAM_ID", "{{TEAM_ID}}")
+BUNDLE_ID = ENV.fetch("APP_IDENTIFIER", "{{BUNDLE_ID}}")
+
+# Shipping targets per platform: Xcode TARGET name => bundle ID. Test targets
+# never ship and are absent. Keep it in step with project.yml. Examples:
+#   "{{APP_NAME}}Widgets" => "#{BUNDLE_ID}.widgets"
+#   "{{APP_NAME}}Watch"   => "#{BUNDLE_ID}.watchkitapp"   (a watch app ships in the iOS build)
+# Profile NAMES are never built by convention: match can append a suffix
+# ("match AppStore com.x.app 1780146157") when a plain-named profile already
+# exists, and a reconstructed name then silently misses. They come back from
+# match's mapping instead (see `signing`).
+SIGNING = {
+  ios: { "{{APP_NAME}}" => BUNDLE_ID },
+  # tvos: { "{{APP_NAME}}-tvOS" => BUNDLE_ID },   # a universal purchase shares the bundle ID
+}.freeze
+
+def api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_PATH")
+  )
+end
+
+# Readonly on CI, which must never mint or renew certificates. Run by hand on a
+# Mac to create or renew; `force:true` re-issues the profiles. Returns this
+# platform's bundle ID => installed profile name.
+#
+# Without ASC_KEY_ID, match signs in with an Apple ID instead (FASTLANE_USER): an
+# App Manager API key can READ profiles, but Apple refuses to let it CREATE them
+# ("This request is forbidden for security reasons").
+def signing(platform, readonly: is_ci, force: false)
+  identifiers = SIGNING.fetch(platform).values
+  match(
+    type: "appstore",
+    platform: platform.to_s,
+    app_identifier: identifiers,
+    team_id: TEAM_ID,
+    readonly: readonly,
+    force: force,
+    api_key: (api_key if ENV["ASC_KEY_ID"])
+  )
+  mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
+  identifiers.to_h do |identifier|
+    profile = mapping[identifier]
+    UI.user_error!("match returned no #{platform} profile for #{identifier}") if profile.nil?
+    [identifier, profile]
+  end
+end
+
+# `fastlane ios certificates force:true` passes the string "true".
+def flag?(options, key)
+  [true, "true", "yes"].include?(options[key])
+end
+
+def beta(platform:, scheme:, app_platform:)
+  # A throwaway keychain for this run, so codesign never touches the runner's
+  # login keychain, which relocks on reboot (errSecInternalComponent). No-op
+  # outside CI.
+  setup_ci
+  sh("cd .. && xcodegen generate")
+  profiles = signing(platform, readonly: true)
+
+  # The generated project signs automatically; pin each shipping target to its
+  # match profile. The project isn't committed, so this leaves the tree clean.
+  SIGNING.fetch(platform).each do |target, identifier|
+    update_code_signing_settings(
+      path: PROJECT,
+      targets: [target],
+      use_automatic_signing: false,
+      team_id: TEAM_ID,
+      code_sign_identity: "Apple Distribution",
+      profile_name: profiles.fetch(identifier)
+    )
+  end
+
+  build_app(
+    project: PROJECT,
+    scheme: scheme,
+    configuration: "Release",
+    export_method: "app-store",
+    export_options: { signingStyle: "manual", provisioningProfiles: profiles },
+    # Reaches SPM resource bundles, which have no signing settings of their own
+    # ("Signing for <bundle> requires a development team").
+    xcargs: "DEVELOPMENT_TEAM=#{TEAM_ID}",
+    output_directory: "build/#{platform}"
+  )
+  verify_ipa(lane_context[SharedValues::IPA_OUTPUT_PATH])
+  upload_to_testflight(api_key: api_key, app_platform: app_platform, skip_waiting_for_build_processing: true)
+end
+
+# A last look inside the archive before it leaves the building. Home Movies uses
+# this to refuse an IPA that carries Debug-only content, and to insist on content
+# App Review needs. Add checks with `listing.lines.any? { ... }`.
+def verify_ipa(ipa)
+  listing = sh("unzip", "-l", ipa, log: false)
+  UI.user_error!("#{ipa} looks empty") if listing.lines.count < 5
+end
+
+# The version being prepared: MARKETING_VERSION from project.yml unless `version:` names another.
+def store_version(options)
+  return options[:version].to_s if options[:version]
+
+  version = sh("cd .. && awk -F'\"' '/^    MARKETING_VERSION:/ {print $2; exit}' project.yml", log: false).strip
+  UI.user_error!("Could not read MARKETING_VERSION from project.yml") if version.empty?
+  version
+end
+
+# App Review's contact person, from the environment so no one's phone number is committed.
+def review_contact
+  {
+    first_name: "REVIEW_FIRST_NAME",
+    last_name: "REVIEW_LAST_NAME",
+    email_address: "REVIEW_EMAIL",
+    phone_number: "REVIEW_PHONE"
+  }.transform_values do |variable|
+    ENV.fetch(variable) { UI.user_error!("#{variable} is not set: App Review's contact (docs/release.md)") }
+  end
+end
+
+# Uploads the App Store text (and, with screenshots:true, the PNGs). Never a
+# binary and never a submission: a person submits in App Store Connect. `force`
+# only skips deliver's interactive HTML preview so the lane can run unattended.
+def metadata(platform:, app_platform:, options:)
+  per_platform = File.directory?(File.join(__dir__, "metadata", platform.to_s))
+  check = "cd .. && python3 scripts/check_store_metadata.py --release"
+  check += " --platform #{platform}" if per_platform
+  sh(check)
+  with_screenshots = flag?(options, :screenshots)
+  deliver(
+    api_key: api_key,
+    app_identifier: BUNDLE_ID,
+    platform: app_platform,
+    app_version: store_version(options),
+    metadata_path: per_platform ? "fastlane/metadata/#{platform}" : "fastlane/metadata",
+    app_review_information: review_contact,
+    skip_binary_upload: true,
+    skip_screenshots: !with_screenshots,
+    overwrite_screenshots: with_screenshots,
+    submit_for_review: false,
+    automatic_release: false,
+    run_precheck_before_submit: false,
+    force: true
+  )
+end
+
+platform :ios do
+  desc "Fetch iOS signing assets (create or renew them when run by hand outside CI)"
+  lane(:certificates) { |options| signing(:ios, force: flag?(options, :force)) }
+
+  desc "Build and upload the iOS/iPadOS app to TestFlight"
+  lane(:beta) { beta(platform: :ios, scheme: "{{APP_NAME}}", app_platform: "ios") }
+
+  desc "Upload the App Store metadata (no binary, no submission; screenshots:true adds the PNGs)"
+  lane(:metadata) { |options| metadata(platform: :ios, app_platform: "ios", options: options) }
+end
+
+# platform :tvos do
+#   lane(:certificates) { |options| signing(:tvos, force: flag?(options, :force)) }
+#   lane(:beta) { beta(platform: :tvos, scheme: "{{APP_NAME}}-tvOS", app_platform: "appletvos") }
+#   lane(:metadata) { |options| metadata(platform: :tvos, app_platform: "appletvos", options: options) }
+# end

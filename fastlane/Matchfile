@@ -1,0 +1,17 @@
+# fastlane match: ONE Apple Distribution certificate and an App Store profile per
+# bundle ID (and platform), encrypted in a private git repo, the "vault". Every
+# machine (your Mac, the runner, a fresh clone) signs from the same identity,
+# fetched into a throwaway keychain, with no dependence on anyone's login
+# keychain. Several apps on one team should SHARE one vault and one certificate:
+# Apple allows only two or three Distribution certificates per team.
+#
+# MATCH_GIT_URL names the vault (an env var / Actions secret, so its location
+# stays out of the source tree) and MATCH_PASSWORD decrypts it.
+#
+# No app_identifier here: the Fastfile's SIGNING table passes each platform's
+# bundle IDs, so always run match through the lanes (`fastlane ios certificates`),
+# never bare `fastlane match`.
+git_url(ENV.fetch("MATCH_GIT_URL", ""))
+storage_mode("git")
+type("appstore")
+team_id(ENV.fetch("TEAM_ID", "{{TEAM_ID}}"))

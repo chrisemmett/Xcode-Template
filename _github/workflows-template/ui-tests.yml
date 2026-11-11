@@ -1,0 +1,93 @@
+# The XCUITest suite, deliberately NOT on the merge gate.
+#
+# build.yml runs the app scheme's unit tests; the UI tests live in their own
+# scheme ({{APP_NAME}}UITests) so they stay off it. UI tests are the least
+# deterministic kind there is, and the gate is meant to be deterministic. Drive
+# them with launch arguments that fix seeds and skip onboarding so they can be
+# promoted onto the gate once they have a stable run history.
+#
+# The weakness of a nightly job is that nobody has to look at it; the
+# notification at the end at least makes a failure observable.
+name: UI Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 UTC nightly. On a self-hosted runner an offline machine queues the
+    # job rather than losing it, so a Mac that sleeps still reports when it wakes.
+    - cron: "0 3 * * *"
+
+concurrency:
+  group: ui-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  uitests:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - name: Note the start time
+        run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Add Homebrew to PATH
+        run: |
+          if [ -x /opt/homebrew/bin/brew ]; then
+            echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          elif [ -x /usr/local/bin/brew ]; then
+            echo /usr/local/bin >> "$GITHUB_PATH"
+          else
+            echo "Homebrew not found on runner" >&2
+            exit 1
+          fi
+
+      - name: Install tools (Brewfile)
+        run: brew bundle --no-upgrade
+
+      # Erases only the picked device (SIM_ERASE=1 in the Makefile), never
+      # `erase all`: a fresh device means default settings, which UI tests
+      # rely on, without disturbing anything else on the runner.
+      - name: UI tests
+        run: make test-ui
+
+      - name: Keep the test results
+        if: ${{ failure() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: build/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Notify
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ vars.NOTIFY_WEBHOOK_URL }}
+          KIND: ui-tests
+          STATUS: ${{ job.status }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] && [ -x scripts/notify.sh ]; then
+            scripts/notify.sh
+          elif [ -n "$NOTIFY_WEBHOOK_URL" ]; then
+            ref=${REF_NAME//\\/\\\\}; ref=${ref//\"/\\\"}
+            curl -sS --max-time 20 -X POST "$NOTIFY_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"message\": \"⚠️ $ref: $STATUS before checkout\\n$GITHUB_SERVER_URL/$REPO/actions/runs/$RUN_ID\", \"silent\": false}" \
+              || true
+          fi

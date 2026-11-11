@@ -1,0 +1,50 @@
+# SwiftLint configuration (from Home Movies). `make lint` runs `swiftlint lint --strict`, so warnings fail it.
+included:
+  - {{APP_NAME}}
+  - {{APP_NAME}}Tests
+  - Packages
+excluded:
+  - Packages/*/.build
+  - build
+opt_in_rules:
+  - closure_spacing
+  - contains_over_filter_count
+  - contains_over_first_not_nil
+  - empty_count
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - modifier_order
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - vertical_whitespace_closing_braces
+disabled_rules:
+  - todo                  # TODOs cite an LLD or issue and are tracked there
+  - trailing_comma        # SwiftFormat owns comma style
+  - opening_brace         # SwiftFormat owns brace wrapping
+  - nesting               # SwiftUI and Codable models nest small types on purpose
+# Project-specific bans go here. Home Movies, for example, bans the prominent
+# button styles because its pale accent made them unreadable:
+# custom_rules:
+#   no_tinted_prominent_buttons:
+#     name: "No tinted prominent buttons"
+#     regex: '\.(borderedProminent|glassProminent)\b'
+#     message: "Use .primaryPill."
+#     severity: error
+line_length:
+  warning: 140
+  error: 160
+  ignores_comments: true
+  ignores_urls: true
+identifier_name:
+  min_length: 2
+  excluded: [id, db, x, y]
+type_body_length:
+  warning: 300
+file_length:
+  warning: 500
+function_body_length:
+  warning: 60

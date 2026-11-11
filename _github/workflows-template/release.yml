@@ -1,0 +1,208 @@
+# TestFlight upload on the self-hosted Mac runner.
+#
+# Triggered by pushing a `testflight-<N>` TAG or BRANCH (the release-to-testflight
+# skill pushes one), or by workflow_dispatch with the build number as input.
+# Branches are accepted because the Claude Code cloud sandbox's git proxy refuses
+# tag pushes; the verify step reads N from either. workflow_dispatch only shows
+# its button once this file is on the default branch, so the ref push is the
+# normal path.
+#
+# Signing: fastlane match, readonly, into a throwaway keychain per run. CI never
+# creates or renews certificates (see .claude/skills/signing-certs/SKILL.md).
+#
+# Security: only refs pushed to this repository trigger it, never fork PRs,
+# because the runner holds the App Store Connect key.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Build number. Must match CURRENT_PROJECT_VERSION in project.yml, so a dispatch can't upload a build that was never bumped."
+        required: true
+        type: string
+  push:
+    tags:
+      - "testflight-*"
+    branches:
+      - "testflight-*"
+
+# Serialise uploads for a ref: a double push would otherwise race two archives
+# at the same build number, and the loser fails only after a full archive.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# The upload uses the App Store Connect key and match clones the vault with
+# MATCH_GIT_BASIC_AUTHORIZATION, so GITHUB_TOKEN only needs to read.
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_PATH: ${{ secrets.ASC_KEY_PATH }}
+      # fastlane match: the vault's passphrase and URL, and base64(user:token) to clone it.
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+    steps:
+      - name: Note the start time
+        run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          # match clones the vault with its own credential; drop the token from .git/config.
+          persist-credentials: false
+
+      # Any mismatch fails here, unlike build.yml: a release produces the binary
+      # the pin describes. Fix by deciding which Xcode should ship.
+      - name: Check Xcode version pin (exact)
+        run: |
+          xcodebuild -version
+          scripts/check_xcode_pin.sh exact
+
+      - name: Add Homebrew to PATH
+        run: |
+          if [ -x /opt/homebrew/bin/brew ]; then
+            echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          elif [ -x /usr/local/bin/brew ]; then
+            echo /usr/local/bin >> "$GITHUB_PATH"
+          else
+            echo "Homebrew not found on runner" >&2
+            exit 1
+          fi
+
+      # fastlane comes from Homebrew, not `bundle exec`: macOS's system Ruby
+      # ships a bundler too old to read a modern Gemfile.lock.
+      - name: Install tools (Brewfile)
+        run: |
+          brew bundle --no-upgrade
+          xcodegen --version
+          fastlane --version
+
+      # Catches "tagged the wrong commit" and "dispatched without bumping"
+      # before fastlane spends ten minutes archiving.
+      - name: Verify build number matches CURRENT_PROJECT_VERSION
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_BUILD: ${{ inputs.build_number }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then source_kind="tag"; else source_kind="branch"; fi
+            expected="${GITHUB_REF_NAME#testflight-}"
+            source="$source_kind '$GITHUB_REF_NAME'"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            expected="$DISPATCH_BUILD"
+            source="dispatch input"
+          else
+            echo "Unsupported trigger: $EVENT_NAME" >&2
+            exit 1
+          fi
+          # The project-base value at a 4-space indent. Every target inherits it,
+          # so the app and its extensions always ship the same CFBundleVersion.
+          project_build="$(awk -F'"' '/^    CURRENT_PROJECT_VERSION:/ {print $2; exit}' project.yml)"
+          if [ -z "$project_build" ]; then
+            echo "Could not parse CURRENT_PROJECT_VERSION from project.yml" >&2
+            exit 1
+          fi
+          if [ "$expected" != "$project_build" ]; then
+            echo "$source implies build $expected but project.yml has $project_build" >&2
+            echo "Bump CURRENT_PROJECT_VERSION (or correct the $source) so they agree, then re-run." >&2
+            exit 1
+          fi
+          echo "$source and project.yml agree on build $expected"
+
+      # Secrets that don't exist are silently empty; fail here with a clear
+      # message instead of a cryptic fastlane error twenty minutes in.
+      - name: Validate App Store Connect secrets
+        run: |
+          : "${ASC_KEY_ID:?ASC_KEY_ID secret is not set in the repo}"
+          : "${ASC_ISSUER_ID:?ASC_ISSUER_ID secret is not set in the repo}"
+          : "${ASC_KEY_PATH:?ASC_KEY_PATH secret is not set in the repo}"
+          if [ ! -r "$ASC_KEY_PATH" ]; then
+            echo "ASC_KEY_PATH points at '$ASC_KEY_PATH' which is missing or unreadable on the runner" >&2
+            exit 1
+          fi
+
+      - name: Validate fastlane match secrets
+        run: |
+          : "${MATCH_PASSWORD:?MATCH_PASSWORD secret is not set (see .claude/skills/signing-certs/SKILL.md)}"
+          : "${MATCH_GIT_URL:?MATCH_GIT_URL secret is not set (the match storage repo URL)}"
+          : "${MATCH_GIT_BASIC_AUTHORIZATION:?MATCH_GIT_BASIC_AUTHORIZATION secret is not set (base64 of user:token for the storage repo)}"
+
+      # match only says "Error cloning certificates repo", so check the vault
+      # credentials here and say which part is wrong. Prints nothing derived
+      # from the secrets' values.
+      - name: Check access to the match vault
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          fail() { echo "::error::$1" >&2; exit 1; }
+          case "$MATCH_GIT_URL" in *[[:space:]]*) fail "MATCH_GIT_URL contains a space or newline" ;; esac
+          case "$MATCH_GIT_URL" in https://*) ;; *) fail "MATCH_GIT_URL should be an https:// URL" ;; esac
+          auth="$MATCH_GIT_BASIC_AUTHORIZATION"
+          case "$auth" in *[[:space:]]*) fail "MATCH_GIT_BASIC_AUTHORIZATION contains a space or newline; make it with printf and tr -d '\\n'" ;; esac
+          case "$auth" in Basic*|basic*) fail "MATCH_GIT_BASIC_AUTHORIZATION starts with 'Basic'; store only the base64 part" ;; esac
+          # macOS's base64 skips characters outside its alphabet instead of
+          # failing, so a raw token "decodes" to junk. Check the alphabet first.
+          [[ "$auth" =~ ^[A-Za-z0-9+/]+=*$ ]] || fail "MATCH_GIT_BASIC_AUTHORIZATION is not base64 (it may be the raw token or user:token before encoding)"
+          decoded="$(printf '%s' "$auth" | base64 --decode 2>/dev/null)" || fail "MATCH_GIT_BASIC_AUTHORIZATION is not valid base64"
+          # Count bytes rather than test $decoded: command substitution drops a trailing newline.
+          all="$(printf '%s' "$auth" | base64 --decode | wc -c)"
+          bare="$(printf '%s' "$auth" | base64 --decode | LC_ALL=C tr -d '\r\n' | wc -c)"
+          [ "$all" -eq "$bare" ] || fail "MATCH_GIT_BASIC_AUTHORIZATION decodes to text with a newline; encode with printf '%s', not echo"
+          printable="$(printf '%s' "$auth" | base64 --decode | LC_ALL=C tr -d '[:print:]' | wc -c)"
+          [ "$printable" -eq 0 ] || fail "MATCH_GIT_BASIC_AUTHORIZATION decodes to non-text bytes, so it isn't base64 of user:token"
+          case "$decoded" in ?*:?*) ;; *) fail "MATCH_GIT_BASIC_AUTHORIZATION does not decode to user:token" ;; esac
+          if ! git -c http.extraheader="Authorization: Basic $auth" ls-remote "$MATCH_GIT_URL" HEAD >/dev/null; then
+            fail "The vault rejected MATCH_GIT_BASIC_AUTHORIZATION (git output above): the token is wrong, expired or can't read the repo"
+          fi
+          echo "The match vault is reachable with these credentials."
+
+      # Each lane generates the project, fetches its platform's profiles,
+      # archives and uploads. Add one step per platform (`fastlane tvos beta`).
+      - name: iPhone and iPad to TestFlight
+        run: fastlane ios beta
+
+      - name: Keep the build logs
+        if: ${{ failure() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-logs
+          path: ~/Library/Logs/gym/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Notify
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ vars.NOTIFY_WEBHOOK_URL }}
+          KIND: testflight
+          STATUS: ${{ job.status }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          # workflow_dispatch runs have no testflight-<N> ref to read it from.
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          PLATFORMS: iPhone and iPad
+          CHECKOUT: ${{ steps.checkout.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] && [ -x scripts/notify.sh ]; then
+            scripts/notify.sh
+          elif [ -n "$NOTIFY_WEBHOOK_URL" ]; then
+            ref=${REF_NAME//\\/\\\\}; ref=${ref//\"/\\\"}
+            curl -sS --max-time 20 -X POST "$NOTIFY_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"message\": \"⚠️ $ref: $STATUS before checkout\\n$GITHUB_SERVER_URL/$REPO/actions/runs/$RUN_ID\", \"silent\": false}" \
+              || true
+          fi
