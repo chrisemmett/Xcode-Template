@@ -125,8 +125,10 @@ done
 mv .github/workflows-template .github/workflows
 chmod +x scripts/*.sh scripts/*.py
 
-# 4. The README's "start here" section is about this script.
+# 4. The README's "start here" section is about this script, and LICENSE is the
+#    template's own MIT licence: the new app chooses its own.
 perl -0pi -e 's/<!-- template:start -->.*?<!-- template:end -->\n*//s' README.md
+rm -f LICENSE
 
 left="$(grep -rIl --exclude-dir=.git --exclude=setup.sh '{{[A-Z_]*}}' . || true)"
 if [ -n "$left" ]; then

@@ -29,7 +29,8 @@ and Claude Code skills that release and fix signing for you.
    `main`, creates `pre-prod` from it, and offers to push both.
 3. Follow the checklist it prints. `docs/release.md` has the detail.
 
-This section and `setup.sh` disappear after setup; everything below is the new
+This section, `setup.sh` and the template's MIT `LICENSE` disappear after setup,
+so a new app starts unlicensed until you choose one; everything below is the new
 app's README.
 <!-- template:end -->
 # {{DISPLAY_NAME}}
