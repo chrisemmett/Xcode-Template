@@ -1,4 +1,4 @@
-# SwiftLint configuration (from Home Movies). `make lint` runs `swiftlint lint --strict`, so warnings fail it.
+# SwiftLint configuration. `make lint` runs `swiftlint lint --strict`, so warnings fail it.
 included:
   - {{APP_NAME}}
   - {{APP_NAME}}Tests
@@ -26,8 +26,8 @@ disabled_rules:
   - trailing_comma        # SwiftFormat owns comma style
   - opening_brace         # SwiftFormat owns brace wrapping
   - nesting               # SwiftUI and Codable models nest small types on purpose
-# Project-specific bans go here. Home Movies, for example, bans the prominent
-# button styles because its pale accent made them unreadable:
+# Project-specific bans go here. For example, an app whose pale accent colour
+# makes the prominent button styles unreadable can ban them:
 # custom_rules:
 #   no_tinted_prominent_buttons:
 #     name: "No tinted prominent buttons"

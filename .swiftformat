@@ -1,4 +1,4 @@
-# SwiftFormat configuration (from Home Movies). `make format` applies it; `make lint` checks it.
+# SwiftFormat configuration. `make format` applies it; `make lint` checks it.
 --swiftversion 6.0
 --exclude **/.build,**/DerivedData,build,fastlane,vendor,.claude
 --indent 4

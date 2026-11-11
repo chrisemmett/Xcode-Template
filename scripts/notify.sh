@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Post a CI result to a chat webhook (FQ, Ball-Kick-Game and Home Movies post to
-# an n8n flow that forwards to Telegram).
+# Post a CI result to a chat webhook (for example an n8n flow that forwards to
+# Telegram).
 #
 # Called by the last step of every workflow. Everything arrives through the
 # step's env: block, never through ${{ }} inside run:, so nothing GitHub
